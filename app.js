@@ -13,7 +13,7 @@ dotenv.config();
 const app = express();
 app.use(bodyParser.json());
 app.use(cors({
-  origin: ['https://fantastic-truffle-935128.netlify.app', 'http://localhost:4200'], // Add Netlify domain here
+  origin: ['https://67b761ef4e239a253b29b9c9--sweet-pothos-e91f0f.netlify.app', 'http://localhost:4200'], // Add Netlify domain here
   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   credentials: true,
   allowedHeaders: ['Content-Type', 'Authorization']
