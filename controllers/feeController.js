@@ -5,230 +5,153 @@ exports.addFee = async (req, res) => {
   try {
     const { admissionNo } = req.params;
     const {
-      class: studentClass,
-      rollNo,
-      admissionFee,
-      registrationFee,
-      computerFee,
+      class: className,
+      tuitionFee,
       transportationFee,
-      examinationFee,
-      developmentFee,
-      annualProgrammeFee,
-      miscellaneousCharges,
-      lateFine,
-      tieBeltIdFee,
-      otherCharges,
       paidAmount,
-      date
+      month,
+      academicYear
     } = req.body;
 
-    // ✅ Check if student exists
+    // Validate numeric fields
+    if (isNaN(month)) {
+      return res.status(400).json({ message: 'Invalid month format' });
+    }
+
+    if (!/^\d{4}-\d{2}$/.test(academicYear)) {
+      return res.status(400).json({ message: 'Academic year must be in YYYY-YY format' });
+    }
+
+    // Validate Student
     const student = await Student.findOne({ admissionNo });
     if (!student) {
-      return res.status(404).json({ message: `Student with admissionNo ${admissionNo} not found.` });
+      return res.status(404).json({ message: `Student ${admissionNo} not found` });
     }
 
-    // ✅ Extract Month & Year
-    const feeDate = date ? new Date(date) : new Date();
-    const month = feeDate.getMonth() + 1;
-    const year = feeDate.getFullYear();
+    // Validate class
+    const validClasses = ['Nursery', 'KG1', 'KG2', '1st', '2nd'];
+    if (!validClasses.includes(className)) {
+      return res.status(400).json({ message: 'Invalid class specified' });
+    }
 
-    // ✅ Check if a fee record already exists for the given month
-    let existingFee = await Fee.findOne({ admissionNo, month, year });
+    // Check existing record
+    const numericMonth = Number(month);
+    const existingFee = await Fee.findOne({ 
+      admissionNo, 
+      month: numericMonth, 
+      academicYear 
+    });
+    
     if (existingFee) {
-      return res.status(400).json({ message: `Fee record already exists for ${month}-${year}.` });
+      return res.status(400).json({ message: 'Fee record already exists for this month' });
     }
 
-    // ✅ Fetch Last Month’s Remaining Amount
+    // Calculate Back Dues
+    const prevMonth = numericMonth === 4 ? 3 : numericMonth - 1;
+    const [startYear] = academicYear.split('-');
+    const prevAcademicYear = numericMonth === 4 ? 
+      `${Number(startYear)-1}-${startYear.slice(2)}` : 
+      academicYear;
+
     const previousFee = await Fee.findOne({
       admissionNo,
-      year: month === 1 ? year - 1 : year,
-      month: month === 1 ? 12 : month - 1
+      month: prevMonth,
+      academicYear: prevAcademicYear
     });
 
-    const previousDue = previousFee ? previousFee.remainingAmount : 0;
+    const backDues = previousFee?.remainingAmount || 0;
 
-    // ✅ Calculate Total Fee for Current Month
-    const totalFee =
-      (admissionFee || 0) +
-      (registrationFee || 0) +
-      (computerFee || 0) +
-      (transportationFee || 0) +
-      (examinationFee || 0) +
-      (developmentFee || 0) +
-      (annualProgrammeFee || 0) +
-      (miscellaneousCharges || 0) +
-      (lateFine || 0) +
-      (tieBeltIdFee || 0) +
-      (otherCharges || 0);
+    // Calculate Totals
+    const currentTotal = Number(tuitionFee) + Number(transportationFee);
+    const totalPayable = currentTotal + backDues;
+    const remainingAmount = totalPayable - Number(paidAmount);
 
-    // ✅ Calculate Total Payable (Current Fee + Previous Due)
-    const totalPayable = totalFee + previousDue;
-
-    // ✅ Validate Paid Amount
+    // Validate Payment
     if (paidAmount > totalPayable) {
-      return res.status(400).json({ message: `Paid amount (${paidAmount}) exceeds total payable (${totalPayable}).` });
+      return res.status(400).json({
+        message: `Paid amount (${paidAmount}) exceeds total payable (${totalPayable})`
+      });
     }
 
-    // ✅ Calculate Remaining Amount
-    const remainingAmount = totalPayable - paidAmount;
-
-    // ✅ Save New Fee Record
+    // Create Fee Record
     const fee = new Fee({
       admissionNo,
+      class: className,
       studentName: student.name,
-      class: studentClass,
-      rollNo,
-      admissionFee,
-      registrationFee,
-      computerFee,
-      transportationFee,
-      examinationFee,
-      developmentFee,
-      annualProgrammeFee,
-      miscellaneousCharges,
-      backDues: previousDue, // ✅ Store previous remaining balance
-      lateFine,
-      tieBeltIdFee,
-      otherCharges,
-      totalFee,
-      paidAmount,
-      remainingAmount,
-      month,
-      year,
-      date: feeDate
+      academicYear,
+      month: numericMonth,
+      year: numericMonth >= 4 ? 
+        Number(academicYear.split('-')[0]) : 
+        Number(academicYear.split('-')[1].padStart(2, '20')),
+      tuitionFee: Number(tuitionFee),
+      transportationFee: Number(transportationFee),
+      backDues,
+      totalFee: currentTotal,
+      paidAmount: Number(paidAmount),
+      remainingAmount
     });
 
     await fee.save();
-    res.status(201).json({ message: 'Monthly fee record added successfully', fee });
+    res.status(201).json(fee);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 // 📌 Update Fee Payment for a Specific Month
-exports.updateFee = async (req, res) => {
+exports.updatePayment = async (req, res) => {
   try {
-    const { admissionNo } = req.params; // Get admission number from URL
-    const { paidAmount, month, year } = req.body;
-    
-    // ✅ Check if student exists
-    const student = await Student.findOne({ admissionNo });
-    if (!student) {
-      return res.status(404).json({ message: `Student with admissionNo ${admissionNo} not found.` });
-    }
+    const { admissionNo, month, academicYear } = req.params;
+    const { amount } = req.body;
 
-    const fee = await Fee.findOne({ admissionNo, month, year });
+    const fee = await Fee.findOne({ admissionNo, month, academicYear });
     if (!fee) {
-      return res.status(404).json({ message: `No fee record found for ${month}-${year}.` });
+      return res.status(404).json({ message: 'Fee record not found' });
     }
 
-    fee.paidAmount += paidAmount;
-    fee.remainingAmount = fee.totalFee - fee.paidAmount;
-    fee.date = Date.now(); // Update the payment date
+    // Update Payments
+    fee.paidAmount += amount;
+    fee.remainingAmount = (fee.totalFee + fee.backDues) - fee.paidAmount;
+
+    // Validate
+    if (fee.paidAmount < 0) {
+      return res.status(400).json({ message: 'Invalid payment amount' });
+    }
 
     await fee.save();
-    res.status(200).json({ message: 'Fee updated successfully', fee });
+    res.status(200).json(fee);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // 📌 Get Fee Record for a Specific Month
 
-exports.getFeeByMonth = async (req, res) => {
+exports.getMonthlyFee = async (req, res) => {
   try {
-    const { admissionNo, month, year } = req.params;
-    const numericMonth = parseInt(month);
-    const numericYear = parseInt(year);
+    const { admissionNo, month, academicYear } = req.params;
 
-    // ✅ Convert month number to month name
-    const monthNames = [
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December"
-    ];
-    const monthName = monthNames[numericMonth - 1];
-
-    // ✅ Find the current month's fee record
-    const fee = await Fee.findOne({ admissionNo, month: numericMonth, year: numericYear });
-
+    const fee = await Fee.findOne({ admissionNo, month, academicYear });
     if (!fee) {
-      return res.status(404).json({ message: `No fee record found for ${monthName} ${year}.` });
+      return res.status(404).json({ message: 'No fee record found' });
     }
 
-    // ✅ Get past months' remaining dues
-    const previousDues = await Fee.aggregate([
-      {
-        $match: {
-          admissionNo,
-          year: numericYear,
-          month: { $lt: numericMonth }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalBackDue: { $sum: "$remainingAmount" } // Sum of unpaid amounts
-        }
-      }
-    ]);
-
-    const pastDue = previousDues.length > 0 ? previousDues[0].totalBackDue : 0;
-    const totalBackDue = pastDue + (fee.backDues || 0);
-
-    // ✅ Calculate next month's carried over due
-    const totalPayable = fee.totalFee + totalBackDue;
-    const remainingDueForNextMonth = totalPayable - fee.paidAmount;
-
-    // ✅ Prepare response data
-    const responseData = {
-      admissionNo: fee.admissionNo,
-      studentName: fee.studentName,
-      month: monthName,
-      year: fee.year,
-      totalFee: fee.totalFee,
-      backDues: fee.backDues,
-      totalPayable: totalPayable,
-      paidAmount: fee.paidAmount,
-      remainingAmount: fee.remainingAmount,
-      totalBackDue: totalBackDue,
-      remainingDueForNextMonth: remainingDueForNextMonth
+    // Calculate Next Month's Back Due
+    const response = {
+      ...fee.toObject(),
+      nextMonthBackDue: fee.remainingAmount
     };
 
-    res.status(200).json(responseData);
+    res.status(200).json(response);
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// 📌 Get Overall Fee Summary for a Student
-exports.getFeeSummary = async (req, res) => {
-  try {
-    const { admissionNo } = req.params;
-
-    const summary = await Fee.aggregate([
-      { $match: { admissionNo } },
-      {
-        $group: {
-          _id: "$admissionNo",
-          studentName: { $first: "$studentName" },
-          totalPaid: { $sum: "$paidAmount" },
-          totalDue: { $sum: "$remainingAmount" },
-          totalFee: { $sum: "$totalFee" }
-        }
-      }
-    ]);
-
-    if (!summary.length) {
-      return res.status(404).json({ message: "No fee records found for this student" });
-    }
-
-    res.status(200).json(summary[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
 
 // 📌 Get Monthly Fee Breakdown for a Student
 exports.getMonthlyFeeSummary = async (req, res) => {
@@ -322,6 +245,120 @@ exports.getFeeByDateRange = async (req, res) => {
     };
 
     res.status(200).json(responseData);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+
+// controllers/feeController.js
+exports.getAcademicYearFees = async (req, res) => {
+  try {
+    const { admissionNo } = req.params;
+    const { academicYear } = req.body;
+
+    // Validate academic year format
+    if (!/^\d{4}-\d{2}$/.test(academicYear)) {
+      return res.status(400).json({ message: 'Invalid academic year format' });
+    }
+
+    // Get all fees for academic year (April to March)
+    const fees = await Fee.find({
+      admissionNo,
+      academicYear
+    }).sort({ month: 1 });
+
+    // Calculate cumulative back dues
+    let runningBalance = 0;
+    const processedFees = fees.map(fee => {
+      runningBalance += fee.remainingAmount;
+      return {
+        ...fee.toObject(),
+        cumulativeDue: runningBalance
+      };
+    });
+
+    res.status(200).json({
+      academicYear,
+      totalRecords: processedFees.length,
+      fees: processedFees
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+exports.getFeeSummary = async (req, res) => {
+  try {
+    const { admissionNo } = req.params;
+    console.log('Fetching fees for:', admissionNo);
+
+    const fees = await Fee.find({ admissionNo });
+    console.log('Found fees:', fees);
+
+    const totalDue = fees.reduce((sum, fee) => sum + fee.remainingAmount, 0);
+    console.log('Calculated totalDue:', totalDue);
+
+    res.status(200).json({ totalDue, totalPaid: 0 });
+    
+  } catch (err) {
+    console.error('Error in getFeeSummary:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+exports.getFeeTable = async (req, res) => {
+  try {
+    const { className, academicYear } = req.body;
+
+    // Validate required fields
+    if (!className || !academicYear) {
+      return res.status(400).json({ message: 'Class and academic year are required' });
+    }
+
+    // Validate academic year format
+    if (!/^\d{4}-\d{2}$/.test(academicYear)) {
+      return res.status(400).json({ message: 'Invalid academic year format' });
+    }
+
+    // Fetch all fee records for the specified class and academic year
+    const fees = await Fee.find({ class: className, academicYear }).sort({ admissionNo: 1, month: 1 });
+
+    // Organize data per student
+    let studentFees = {};
+
+    fees.forEach(fee => {
+      if (!studentFees[fee.admissionNo]) {
+        studentFees[fee.admissionNo] = {
+          admissionNo: fee.admissionNo,
+          studentName: fee.studentName,
+          class: fee.class, // ✅ Include the class
+          tuitionFee: fee.tuitionFee,
+          transportationFee: fee.transportationFee,
+          totalFee: fee.tuitionFee + fee.transportationFee,
+          payments: {}, // Monthly payments
+          backDues: 0 // Initialize back dues
+        };
+      }
+
+      // Store monthly fee details
+      studentFees[fee.admissionNo].payments[fee.month] = {
+        paidAmount: fee.paidAmount,
+        remainingAmount: fee.remainingAmount
+      };
+
+      // Update back dues
+      studentFees[fee.admissionNo].backDues = fee.remainingAmount;
+    });
+
+    // Convert object to array for response
+    const formattedData = Object.values(studentFees);
+
+    res.status(200).json(formattedData);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

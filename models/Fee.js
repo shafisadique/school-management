@@ -1,39 +1,34 @@
 const mongoose = require('mongoose');
 
 const feeSchema = new mongoose.Schema({
-  admissionNo: { type: String, required: true }, // No unique constraint here
+  admissionNo: { type: String, required: true },
   studentName: { type: String, required: true },
-  class: { type: String, required: true },
-  rollNo: { type: String, required: true },
+  class: {
+    type: String,
+    required: true,
+    enum: ['Nursery', 'KG1', 'KG2', '1st', '2nd'] // Class validation
+  },
+  academicYear: { type: String, required: true }, // "2024-25"
   
-  // Fee Breakdown
-  admissionFee: { type: Number, default: 0 },
-  registrationFee: { type: Number, default: 0 },
-  computerFee: { type: Number, default: 0 },
-  transportationFee: { type: Number, default: 0 },
-  examinationFee: { type: Number, default: 0 },
-  developmentFee: { type: Number, default: 0 },
-  annualProgrammeFee: { type: Number, default: 0 },
-  miscellaneousCharges: { type: Number, default: 0 },
+  // Monthly Fees
+  month: { type: Number, required: true }, // 4=April, 5=May,...3=March
+  year: { type: Number, required: true }, // Actual calendar year
+  
+  // Fee Components
+  tuitionFee: { type: Number, required: true },
+  transportationFee: { type: Number, required: true },
   backDues: { type: Number, default: 0 },
-  lateFine: { type: Number, default: 0 },
-  tieBeltIdFee: { type: Number, default: 0 },
-  otherCharges: { type: Number, default: 0 },
-
-  // Monthly Tracking
-  month: { type: Number, required: true }, // Store month (1-12)
-  year: { type: Number, required: true }, // Store year (2025, etc.)
-
-  // Financial Summary
-  totalFee: { type: Number, default: 0 },
+  
+  // Payment Details
+  totalFee: { type: Number, required: true },
   paidAmount: { type: Number, default: 0 },
-  remainingAmount: { type: Number, default: 0 },
-
-  // Date of Fee Entry
-  date: { type: Date, default: Date.now }
+  remainingAmount: { type: Number, required: true },
+  
+  // Audit
+  createdAt: { type: Date, default: Date.now }
 });
 
-// ✅ Fix: Allow multiple fee records per student, but only one per month-year
-feeSchema.index({ admissionNo: 1, month: 1, year: 1 }, { unique: true });
+// Unique constraint for monthly records
+feeSchema.index({ admissionNo: 1, month: 1, academicYear: 1 }, { unique: true });
 
 module.exports = mongoose.model('Fee', feeSchema);
